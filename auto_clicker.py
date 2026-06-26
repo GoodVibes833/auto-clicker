@@ -112,7 +112,7 @@ def click_sequence(log_callback, status_callback, random_mode=False):
     try:
         import pygetwindow
         browser = pygetwindow.getActiveWindow()
-        if browser:
+        if browser and hasattr(browser, 'left'):
             win_x, win_y = browser.left, browser.top
             win_w, win_h = browser.width, browser.height
             log_callback(f'Browser window: ({win_x}, {win_y}) {win_w}x{win_h}')
@@ -128,7 +128,7 @@ def click_sequence(log_callback, status_callback, random_mode=False):
     # Calculate button positions based on actual browser window
     grid_w = min(600, win_w - 40)
     grid_x = win_x + (win_w - grid_w) // 2
-    grid_y = win_y + 185  # Browser chrome offset + header
+    grid_y = win_y + 150  # Browser chrome offset + header (adjusted for Mac)
 
     button_positions = [
         (grid_x + int(grid_w * 0.25), grid_y + 35),  # Start
@@ -142,6 +142,47 @@ def click_sequence(log_callback, status_callback, random_mode=False):
         (grid_x + int(grid_w * 0.25), grid_y + 379), # Reset
         (grid_x + int(grid_w * 0.75), grid_y + 379), # Done
     ]
+
+    log_callback(f'Grid: x={grid_x}, y={grid_y}, w={grid_w}')
+    for i, (bx, by) in enumerate(button_positions):
+        log_callback(f'  {BUTTONS[i]}: ({bx}, {by})')
+
+    # Calibration: ask user to click Start button to get actual position
+    log_callback('Please click the Start button to calibrate...')
+    status_callback('Click Start to calibrate')
+    
+    # Wait for user to click Start button
+    calibration_done = False
+    while not calibration_done and not stop_flag.is_set():
+        time.sleep(0.1)
+        # Check if mouse was clicked (simple check - wait 5 seconds)
+        for _ in range(50):  # 5 seconds
+            if stop_flag.is_set():
+                break
+            time.sleep(0.1)
+        
+        if stop_flag.is_set():
+            break
+        
+        # Get current mouse position as calibration point
+        cal_x, cal_y = pyautogui.position()
+        log_callback(f'Calibrated at: ({cal_x}, {cal_y})')
+        
+        # Calculate offset from expected position
+        expected_x, expected_y = button_positions[0]
+        offset_x = cal_x - expected_x
+        offset_y = cal_y - expected_y
+        
+        log_callback(f'Offset: x={offset_x}, y={offset_y}')
+        
+        # Apply offset to all button positions
+        button_positions = [(x + offset_x, y + offset_y) for x, y in button_positions]
+        
+        calibration_done = True
+
+    if stop_flag.is_set():
+        running = False
+        return
 
     # Check if Start button is clicked first
     first_click_done = False
@@ -192,9 +233,9 @@ def click_sequence(log_callback, status_callback, random_mode=False):
                     pyautogui.moveTo(x, y, duration=MOUSE_SPEED)
                     time.sleep(0.15)
                     
-                    # Check if user moved mouse
+                    # Check if mouse is at expected position (user didn't move it)
                     mouse_after = pyautogui.position()
-                    if abs(mouse_after[0] - mouse_before[0]) > 50 or abs(mouse_after[1] - mouse_before[1]) > 50:
+                    if abs(mouse_after[0] - x) > 30 or abs(mouse_after[1] - y) > 30:
                         log_callback('CANCELLED: Mouse moved by user')
                         status_callback('Stopped — mouse moved')
                         running = False
@@ -227,7 +268,7 @@ def click_sequence(log_callback, status_callback, random_mode=False):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('Auto Clicker')
+        self.title('Task Assistant')
         self.geometry('460x380')
         self.resizable(False, False)
         self.configure(bg='#0f0f1a')

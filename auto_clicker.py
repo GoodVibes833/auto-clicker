@@ -19,7 +19,8 @@ LOOP_COUNT  = 3     # 0 = infinite
 BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 HTML_PATH = os.path.join(BASE_DIR, 'demo.html')
 
-pyautogui.FAILSAFE = True   # move mouse to top-left corner to abort
+pyautogui.FAILSAFE = True   # Move mouse to top-left corner to abort
+pyautogui.PAUSE = 0.05
 
 
 # ── Local HTTP server ──────────────────────────────────────
@@ -46,17 +47,52 @@ running = False
 stop_flag = threading.Event()
 
 
-def find_button_center(label_text):
-    """Use pyautogui image-free search: locate button text on screen."""
+def find_button_center(button_name):
+    """Find button by text on screen using OCR-free method."""
     try:
+        # Try to locate the button by searching for its text
+        # We'll use a region-based search to improve accuracy
+        screen_w, screen_h = pyautogui.size()
+        search_region = (0, 100, screen_w, screen_h - 200)  # Exclude top/bottom areas
+        
+        # Search for the button text
         loc = pyautogui.locateOnScreen(
-            os.path.join(BASE_DIR, f'btn_{label_text.lower()}.png'),
-            confidence=0.8
+            f'btn_{button_name.lower()}',
+            confidence=0.7,
+            region=search_region
         )
         if loc:
             return pyautogui.center(loc)
     except Exception:
         pass
+    
+    # Fallback: try to find by searching for button-like elements
+    try:
+        # Look for buttons in the expected grid area
+        grid_w = min(600, screen_w - 40)
+        grid_x = (screen_w - grid_w) // 2
+        grid_y = 185  # Browser chrome offset + header
+        
+        # Define search regions for each button position
+        button_positions = [
+            (grid_x + int(grid_w * 0.25), grid_y + 35),  # Start
+            (grid_x + int(grid_w * 0.75), grid_y + 35),  # Stop
+            (grid_x + int(grid_w * 0.25), grid_y + 121), # Refresh
+            (grid_x + int(grid_w * 0.75), grid_y + 121), # Save
+            (grid_x + int(grid_w * 0.25), grid_y + 207), # Upload
+            (grid_x + int(grid_w * 0.75), grid_y + 207), # Download
+            (grid_x + int(grid_w * 0.25), grid_y + 293), # Settings
+            (grid_x + int(grid_w * 0.75), grid_y + 293), # Analyze
+            (grid_x + int(grid_w * 0.25), grid_y + 379), # Reset
+            (grid_x + int(grid_w * 0.75), grid_y + 379), # Done
+        ]
+        
+        button_index = BUTTONS.index(button_name)
+        if button_index < len(button_positions):
+            return button_positions[button_index]
+    except Exception:
+        pass
+    
     return None
 
 
@@ -69,45 +105,104 @@ def click_sequence(log_callback, status_callback):
     time.sleep(2.5)  # wait for browser to open
 
     screen_w, screen_h = pyautogui.size()
+    log_callback(f'Screen: {screen_w}x{screen_h}')
 
-    # Estimated button grid positions based on 1920x1080 reference
-    # Buttons are in a 2-col x 5-row grid, centered, max-width 600px
-    grid_w = min(600, screen_w - 40)
-    grid_x = (screen_w - grid_w) // 2
-    col = [int(grid_x + grid_w * 0.25), int(grid_x + grid_w * 0.75)]
+    # Get browser window position (works on Mac and Windows)
+    try:
+        import pygetwindow
+        browser = pygetwindow.getActiveWindow()
+        if browser:
+            win_x, win_y = browser.left, browser.top
+            win_w, win_h = browser.width, browser.height
+            log_callback(f'Browser window: ({win_x}, {win_y}) {win_w}x{win_h}')
+        else:
+            win_x, win_y = 0, 100  # fallback
+            win_w, win_h = screen_w, screen_h - 100
+            log_callback('Could not detect browser window, using screen coordinates')
+    except Exception as e:
+        win_x, win_y = 0, 100  # fallback
+        win_w, win_h = screen_w, screen_h - 100
+        log_callback(f'Window detection failed: {e}, using screen coordinates')
 
-    # Browser chrome offset + header + log box
-    top_offset = 185
-    btn_h = 70
-    gap_h = 16
-    rows = [int(top_offset + i * (btn_h + gap_h) + btn_h // 2) for i in range(5)]
+    # Calculate button positions based on actual browser window
+    grid_w = min(600, win_w - 40)
+    grid_x = win_x + (win_w - grid_w) // 2
+    grid_y = win_y + 185  # Browser chrome offset + header
 
-    coords = [
-        (col[0], rows[0]), (col[1], rows[0]),
-        (col[0], rows[1]), (col[1], rows[1]),
-        (col[0], rows[2]), (col[1], rows[2]),
-        (col[0], rows[3]), (col[1], rows[3]),
-        (col[0], rows[4]), (col[1], rows[4]),
+    button_positions = [
+        (grid_x + int(grid_w * 0.25), grid_y + 35),  # Start
+        (grid_x + int(grid_w * 0.75), grid_y + 35),  # Stop
+        (grid_x + int(grid_w * 0.25), grid_y + 121), # Refresh
+        (grid_x + int(grid_w * 0.75), grid_y + 121), # Save
+        (grid_x + int(grid_w * 0.25), grid_y + 207), # Upload
+        (grid_x + int(grid_w * 0.75), grid_y + 207), # Download
+        (grid_x + int(grid_w * 0.25), grid_y + 293), # Settings
+        (grid_x + int(grid_w * 0.75), grid_y + 293), # Analyze
+        (grid_x + int(grid_w * 0.25), grid_y + 379), # Reset
+        (grid_x + int(grid_w * 0.75), grid_y + 379), # Done
     ]
 
-    while not stop_flag.is_set():
-        loop_num += 1
-        if LOOP_COUNT > 0 and loop_num > LOOP_COUNT:
-            break
+    # Check if Start button is clicked first
+    first_click_done = False
 
-        for i, (x, y) in enumerate(coords):
-            if stop_flag.is_set():
+    try:
+        while not stop_flag.is_set():
+            loop_num += 1
+            if LOOP_COUNT > 0 and loop_num > LOOP_COUNT:
                 break
-            name = BUTTONS[i]
-            status_callback(f'Clicking: {name}')
-            pyautogui.moveTo(x, y, duration=MOUSE_SPEED)
-            time.sleep(0.15)
-            pyautogui.click()
-            total += 1
-            log_callback(f'[Loop {loop_num}]  {name}  — total clicks: {total}')
-            time.sleep(DELAY_MS)
 
-        time.sleep(0.8)
+            for i, button_name in enumerate(BUTTONS):
+                if stop_flag.is_set():
+                    break
+                
+                # Check if first click is Start button
+                if not first_click_done and button_name != 'Start':
+                    log_callback('ERROR: You must click Start button first')
+                    status_callback('Click Start first')
+                    running = False
+                    break
+                
+                # Store mouse position before move
+                mouse_before = pyautogui.position()
+                
+                status_callback(f'Clicking: {button_name}')
+                
+                # Get button position
+                if i < len(button_positions):
+                    x, y = button_positions[i]
+                else:
+                    log_callback(f'ERROR: Button index {i} out of range')
+                    break
+                
+                try:
+                    pyautogui.moveTo(x, y, duration=MOUSE_SPEED)
+                    time.sleep(0.15)
+                    
+                    # Check if user moved mouse
+                    mouse_after = pyautogui.position()
+                    if abs(mouse_after[0] - mouse_before[0]) > 50 or abs(mouse_after[1] - mouse_before[1]) > 50:
+                        log_callback('CANCELLED: Mouse moved by user')
+                        status_callback('Stopped — mouse moved')
+                        running = False
+                        break
+                    
+                    pyautogui.click()
+                    total += 1
+                    first_click_done = True
+                    log_callback(f'[Loop {loop_num}]  {button_name}  — total: {total}')
+                except Exception as e:
+                    log_callback(f'ERROR clicking {button_name}: {e}')
+                
+                if not running:
+                    break
+                
+                time.sleep(DELAY_MS)
+
+            if not running:
+                break
+            time.sleep(0.8)
+    except Exception as e:
+        log_callback(f'FATAL: {e}')
 
     running = False
     status_callback(f'Done — {total} clicks total')

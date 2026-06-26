@@ -5,6 +5,7 @@ import http.server
 import socketserver
 import os
 import sys
+import random
 import tkinter as tk
 from tkinter import ttk
 import pyautogui
@@ -96,7 +97,7 @@ def find_button_center(button_name):
     return None
 
 
-def click_sequence(log_callback, status_callback):
+def click_sequence(log_callback, status_callback, random_mode=False):
     global running
     stop_flag.clear()
     loop_num = 0
@@ -151,9 +152,22 @@ def click_sequence(log_callback, status_callback):
             if LOOP_COUNT > 0 and loop_num > LOOP_COUNT:
                 break
 
-            for i, button_name in enumerate(BUTTONS):
+            # Create button list for this loop
+            if random_mode:
+                button_indices = list(range(len(BUTTONS)))
+                # Ensure Start is first if not clicked yet
+                if not first_click_done and 0 in button_indices:
+                    button_indices.remove(0)
+                    button_indices.insert(0, 0)
+                random.shuffle(button_indices)
+            else:
+                button_indices = list(range(len(BUTTONS)))
+
+            for idx in button_indices:
                 if stop_flag.is_set():
                     break
+                
+                button_name = BUTTONS[idx]
                 
                 # Check if first click is Start button
                 if not first_click_done and button_name != 'Start':
@@ -168,10 +182,10 @@ def click_sequence(log_callback, status_callback):
                 status_callback(f'Clicking: {button_name}')
                 
                 # Get button position
-                if i < len(button_positions):
-                    x, y = button_positions[i]
+                if idx < len(button_positions):
+                    x, y = button_positions[idx]
                 else:
-                    log_callback(f'ERROR: Button index {i} out of range')
+                    log_callback(f'ERROR: Button index {idx} out of range')
                     break
                 
                 try:
@@ -217,6 +231,7 @@ class App(tk.Tk):
         self.geometry('460x380')
         self.resizable(False, False)
         self.configure(bg='#0f0f1a')
+        self.attributes('-topmost', True)  # Keep window always on top
         self._build_ui()
 
         # Start local server in background
@@ -281,6 +296,15 @@ class App(tk.Tk):
         tk.Label(cfg, text='(0=∞)', bg='#0f0f1a', fg='#4b5563',
                  font=('Segoe UI', 8)).grid(row=0, column=4, padx=2)
 
+        # Random mode row
+        random_cfg = tk.Frame(self, bg='#0f0f1a')
+        random_cfg.pack(pady=(8, 0))
+        self.random_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(random_cfg, text='Random order', variable=self.random_var,
+                      bg='#0f0f1a', fg='#c4b5fd', selectcolor='#1a1a2e',
+                      activebackground='#0f0f1a', activeforeground='#a78bfa',
+                      font=('Segoe UI', 9)).pack()
+
     def log(self, msg):
         self.log_box.config(state='normal')
         self.log_box.insert('end', msg + '\n')
@@ -297,6 +321,7 @@ class App(tk.Tk):
         running = True
         DELAY_MS   = self.delay_var.get()
         LOOP_COUNT = self.loop_var.get()
+        random_mode = self.random_var.get()
 
         self.start_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
@@ -310,6 +335,7 @@ class App(tk.Tk):
             args=(
                 lambda m: self.after(0, self.log, m),
                 lambda m: self.after(0, self.set_status, m),
+                random_mode,
             ),
             daemon=True
         )
